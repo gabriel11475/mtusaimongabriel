@@ -24,7 +24,7 @@ services:
     networks:
       - my-network
     depends_on:
-      - postgres
+      - rabbitmq
   postgres:
     image: postgres:13.1
     container_name: postgres
@@ -44,3 +44,8 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - my-network
+  rabbitmq:
+    image: rabbitmq:3.8.17-management
+    ports:
+      - "5672:5672"    # Porta padrão do RabbitMQ
+      - "15672:15672"  # Porta da interface de gerenciamento do RabbitMQ

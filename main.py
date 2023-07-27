@@ -8,7 +8,7 @@ from sql_app.database import engine, SessionLocal
 from util.email_body import EmailSchema
 import pika
 from prometheus_fastapi_instrumentator import Instrumentator
-
+import asyncio
 models.Base.metadata.create_all(bind=engine)
 
 conf = ConnectionConfig(
@@ -38,6 +38,8 @@ def get_db():
     finally:
         db.close()
 
+channel = None
+
 
 @app.get("/get_history/{id}")
 async def get_history(id: int, db: Session = Depends(get_db)):
@@ -56,7 +58,9 @@ async def get_all_history(db: Session = Depends(get_db)):
     return history
 
 async def processDtm(info: Request, db: Session = Depends(get_db)):
-    info = await info.json()
+    
+    #info = await info.json()
+    info = info.json
     states = set(info.get("states", []))
 
     if len(states) == 0:
@@ -135,12 +139,24 @@ def on_message(channel, method_frame, header_frame, body):
     listresult.append(processDtm(json_data))
     channel.basic_ack(delivery_tag=method_frame.delivery_tag)
 
+def send_json_to_queue(json_data):
+    channel.basic_publish(exchange='', routing_key='json_queue', body=json.dumps(json_data))
+
 @app.post("/dtm")
 async def dtm(info: Request, db: Session = Depends(get_db)):
     listresult = []
     connection = pika.BlockingConnection()
     channel = connection.channel()
     channel.queue_declare(queue='json_queue')
+    batch_data = await info.json
+    if isinstance(batch_data, list):
+        for json_data in batch_data:
+            send_json_to_queue(json_data)
+    else:
+        return {
+            "code": "400",
+            "msg": "Json Batch is empty cannot be empty"
+        }
     channel.basic_consume('json_queue', on_message)
     channel.start_consuming()
 
@@ -174,3 +190,109 @@ async def simple_send(email: EmailSchema, result: str, configuration: str):
     fm = FastMail(conf)
     await fm.send_message(message)
     return "OK"
+
+class Object(object):
+    pass
+class RequestMock:
+    def __init__(self, json_data):
+        self.json_data = json_data
+    async def json(self):
+        return self.json_data
+async def main():
+    dicio = {
+                "input": "0011",
+                "states": [
+                    "q0",
+                    "q1",
+                    "q2",
+                    "q3",
+                    "q4"
+                ],
+                "input_symbols": [
+                    "0",
+                    "1"
+                ],
+                "tape_symbols": [
+                    "0",
+                    "1",
+                    "x",
+                    "y",
+                    "."
+                ],
+                "initial_state": "q0",
+                "blank_symbol": ".",
+                "final_states": [
+                    "q4"
+                ],
+                "transitions": {
+                    "q0": {
+                    "0": [
+                        "q1",
+                        "x",
+                        "R"
+                    ],
+                    "y": [
+                        "q3",
+                        "y",
+                        "R"
+                    ]
+                    },
+                    "q1": {
+                    "0": [
+                        "q1",
+                        "0",
+                        "R"
+                    ],
+                    "1": [
+                        "q2",
+                        "y",
+                        "L"
+                    ],
+                    "y": [
+                        "q1",
+                        "y",
+                        "R"
+                    ]
+                    },
+                    "q2": {
+                    "0": [
+                        "q2",
+                        "0",
+                        "L"
+                    ],
+                    "x": [
+                        "q0",
+                        "x",
+                        "R"
+                    ],
+                    "y": [
+                        "q2",
+                        "y",
+                        "L"
+                    ]
+                    },
+                    "q3": {
+                    "y": [
+                        "q3",
+                        "y",
+                        "R"
+                    ],
+                    ".": [
+                        "q4",
+                        ".",
+                        "R"
+                    ]
+                    }
+                }
+            }
+    #jsont=  json.dumps(dicio)
+    json_objects_batch = []
+    json_objects_batch.append(dicio)
+    newdicio = dicio
+    json_objects_batch.append(newdicio)
+    jsonteste = RequestMock(json_objects_batch)
+    db = get_db()
+    str = await dtm(json_objects_batch, db)
+    print(str)
+
+asyncio.run(main())
